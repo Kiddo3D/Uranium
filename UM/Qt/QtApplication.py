@@ -224,7 +224,7 @@ class QtApplication(QApplication, Application, SignalEmitter):
     ##  Display text on the splash screen.
     def showSplashMessage(self, message):
         if self._splash:
-            self._splash.showMessage(message , Qt.AlignHCenter | Qt.AlignVCenter)
+            self._splash.showMessage(message , Qt.AlignHCenter | Qt.AlignBottom, Qt.white)
             self.processEvents()
 
     ##  Close the splash screen after the application has started.
