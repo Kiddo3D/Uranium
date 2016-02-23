@@ -6,6 +6,7 @@ from UM.Event import Event, MouseEvent, KeyEvent
 from UM.Application import Application
 from UM.Scene.ToolHandle import ToolHandle
 from UM.Scene.Selection import Selection
+from UM.Scene.SceneNode import SceneNode
 from UM.Math.Plane import Plane
 from UM.Math.Vector import Vector
 
@@ -31,6 +32,10 @@ class ScaleTool(Tool):
 
         self._maximum_bounds = None
         self._move_up = True
+        
+        # We use the position of the scale handle when the operation starts.
+        # This is done in order to prevent runaway reactions (drag changes of 100+)
+        self._saved_handle_position = None
 
         self.setExposedProperties(
             "ScaleSnap",
@@ -71,7 +76,7 @@ class ScaleTool(Tool):
                 self._non_uniform_scale = False
                 self.propertyChanged.emit()
 
-        if event.type == Event.MousePressEvent:
+        if event.type == Event.MousePressEvent and self._controller.getToolsEnabled():
             if MouseEvent.LeftButton not in event.buttons:
                 return False
 
@@ -82,16 +87,16 @@ class ScaleTool(Tool):
             if ToolHandle.isAxis(id):
                 self.setLockedAxis(id)
 
-            handle_position = self._handle.getWorldPosition()
+            self._saved_handle_position = self._handle.getWorldPosition()
 
             if id == ToolHandle.XAxis:
-                self.setDragPlane(Plane(Vector(0, 0, 1), handle_position.z))
+                self.setDragPlane(Plane(Vector(0, 0, 1), self._saved_handle_position.z))
             elif id == ToolHandle.YAxis:
-                self.setDragPlane(Plane(Vector(0, 0, 1), handle_position.z))
+                self.setDragPlane(Plane(Vector(0, 0, 1), self._saved_handle_position.z))
             elif id == ToolHandle.ZAxis:
-                self.setDragPlane(Plane(Vector(0, 1, 0), handle_position.y))
+                self.setDragPlane(Plane(Vector(0, 1, 0), self._saved_handle_position.y))
             else:
-                self.setDragPlane(Plane(Vector(0, 1, 0), handle_position.y))
+                self.setDragPlane(Plane(Vector(0, 1, 0), self._saved_handle_position.y))
 
             self.setDragStart(event.x, event.y)
             self.operationStarted.emit(self)
@@ -100,51 +105,31 @@ class ScaleTool(Tool):
             if not self.getDragPlane():
                 return False
 
-            handle_position = self._handle.getWorldPosition()
+            #handle_position = self._handle.getWorldPosition()
             drag_position = self.getDragPosition(event.x, event.y)
             if drag_position:
-                drag_length = (drag_position - handle_position).length()
+                drag_length = (drag_position - self._saved_handle_position).length()
                 if self._drag_length > 0:
                     drag_change = (drag_length - self._drag_length) / 100 * self._scale_speed
 
-                    if self._snap_scale:
-                        scaleFactor = round(drag_change, 1)
-                    else:
-                        scaleFactor = drag_change
+                    scale_factor = drag_change
 
-                    scale = Vector(0.0, 0.0, 0.0)
+                    scale_change = Vector(0.0, 0.0, 0.0)
                     if self._non_uniform_scale:
                         if self.getLockedAxis() == ToolHandle.XAxis:
-                            scale.setX(scaleFactor)
+                            scale_change.setX(scale_factor)
                         elif self.getLockedAxis() == ToolHandle.YAxis:
-                            scale.setY(scaleFactor)
+                            scale_change.setY(scale_factor)
                         elif self.getLockedAxis() == ToolHandle.ZAxis:
-                            scale.setZ(scaleFactor)
-
+                            scale_change.setZ(scale_factor)
                     else:
-                        scale.setX(scaleFactor)
-                        scale.setY(scaleFactor)
-                        scale.setZ(scaleFactor)
+                        scale_change.setX(scale_factor)
+                        scale_change.setY(scale_factor)
+                        scale_change.setZ(scale_factor)
 
-                    Selection.applyOperation(ScaleOperation, scale, add_scale=True)
+                    Selection.applyOperation(ScaleOperation, scale_change, relative_scale = True, snap = self._snap_scale)
 
-                    #this part prevents the mesh being scaled to a size < 0.
-                    #This cannot be done before the operation (even though that would be more efficient)
-                    #because then the operation can distract more of the mesh then is remaining of its size
-                    realWorldMeshScale = Selection.getSelectedObject(0).getScale()
-                    if realWorldMeshScale.x <= 0 or realWorldMeshScale.y <= 0 or realWorldMeshScale.z <= 0:
-                        minimumScale = 0.01 #1% so the mesh never completely disapears for the user
-                        if self._snap_scale == True:
-                            minimumScale = 0.1 #10% same reason as above
-                        if realWorldMeshScale.x <= 0:
-                            realWorldMeshScale.setX(minimumScale)
-                        if realWorldMeshScale.y <= 0:
-                            realWorldMeshScale.setY(minimumScale)
-                        if realWorldMeshScale.z <= 0:
-                            realWorldMeshScale.setZ(minimumScale)
-                        Selection.applyOperation(SetTransformOperation, None, None, realWorldMeshScale)
-
-                self._drag_length = (handle_position - drag_position).length()
+                self._drag_length = (self._saved_handle_position - drag_position).length()
                 return True
 
         if event.type == Event.MouseReleaseEvent:
@@ -180,37 +165,40 @@ class ScaleTool(Tool):
 
     def getObjectWidth(self):
         if Selection.hasSelection():
-            return round(float(Selection.getSelectedObject(0).getBoundingBox().width), 1)
+            return float(Selection.getSelectedObject(0).getBoundingBox().width)
 
         return 0.0
 
     def getObjectHeight(self):
         if Selection.hasSelection():
-            return round(float(Selection.getSelectedObject(0).getBoundingBox().height), 1)
+            return float(Selection.getSelectedObject(0).getBoundingBox().height)
 
         return 0.0
 
     def getObjectDepth(self):
         if Selection.hasSelection():
-            return round(float(Selection.getSelectedObject(0).getBoundingBox().depth), 1)
+            return float(Selection.getSelectedObject(0).getBoundingBox().depth)
 
         return 0.0
 
     def getScaleX(self):
         if Selection.hasSelection():
-            return round(float(Selection.getSelectedObject(0).getScale().x), 4)
+            ## Ensure that the returned value is positive (mirror causes scale to be negative)
+            return abs(round(float(Selection.getSelectedObject(0).getScale().x), 4))
 
         return 1.0
 
     def getScaleY(self):
         if Selection.hasSelection():
-            return round(float(Selection.getSelectedObject(0).getScale().y), 4)
+            ## Ensure that the returned value is positive (mirror causes scale to be negative)
+            return abs(round(float(Selection.getSelectedObject(0).getScale().y), 4))
 
         return 1.0
 
     def getScaleZ(self):
         if Selection.hasSelection():
-            return round(float(Selection.getSelectedObject(0).getScale().z), 4)
+            ## Ensure that the returned value is positive (mirror causes scale to be negative)
+            return abs(round(float(Selection.getSelectedObject(0).getScale().z), 4))
 
         return 1.0
 

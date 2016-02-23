@@ -6,6 +6,12 @@ import collections
 import os.path
 from copy import deepcopy
 
+## Python 3.4 work arround (3.4 -> 3.5 added json.decoder.JSONDecodeError)
+try:
+    JSONDecodeError = json.decoder.JSONDecodeError
+except:
+    JSONDecodeError = ValueError
+
 from UM.Resources import Resources
 from UM.Signal import Signal, SignalEmitter
 from UM.Settings import SettingsError
@@ -32,6 +38,8 @@ class MachineDefinition(SignalEmitter):
         self._author = ""
         self._visible = True
         self._pages = []
+        self._profiles_machine_id = ""
+        self._file_types = "" #The file types that this type of machine can read, such as g-code.
 
         self._machine_settings = []
         self._categories = []
@@ -43,6 +51,9 @@ class MachineDefinition(SignalEmitter):
 
     def getId(self):
         return self._id
+
+    def getProfilesMachineId(self):
+        return self._profiles_machine_id
 
     def getName(self):
         return self._name
@@ -65,6 +76,14 @@ class MachineDefinition(SignalEmitter):
     def getPages(self):
         return self._pages
 
+    ##  Gets the list of file formats that this machine definition supports.
+    #
+    #   Every file format is identified by its MIME type.
+    #
+    #   \return A list of MIME types whose file formats this machine supports.
+    def getFileFormats(self):
+        return self._file_formats
+
     def hasVariants(self):
         return len(self._machine_manager.getAllMachineVariants(self._id)) > 1
 
@@ -86,7 +105,10 @@ class MachineDefinition(SignalEmitter):
         if not self._json_data:
             clean_json = True
             with open(self._path, "rt", -1, "utf-8") as f:
-                self._json_data = json.load(f, object_pairs_hook=collections.OrderedDict)
+                try:
+                    self._json_data = json.load(f, object_pairs_hook=collections.OrderedDict)
+                except JSONDecodeError as e:
+                    raise SettingsError.InvalidFileError(self._path) from e
 
         if "id" not in self._json_data or "name" not in self._json_data or "version" not in self._json_data:
             raise SettingsError.InvalidFileError(self._path)
@@ -100,12 +122,17 @@ class MachineDefinition(SignalEmitter):
             self._json_data.update(app_data)
 
         self._id = self._json_data["id"]
+        if "profiles_machine" in self._json_data:
+            self._profiles_machine_id = self._json_data["profiles_machine"]
+        else:
+            self._profiles_machine_id = self._id
         self._name = self._json_data["name"]
         self._visible = self._json_data.get("visible", True)
         self._variant_name = self._json_data.get("variant", "")
         self._manufacturer = self._json_data.get("manufacturer", uranium_catalog.i18nc("@label", "Unknown Manufacturer"))
         self._author = self._json_data.get("author", uranium_catalog.i18nc("@label", "Unknown Author"))
         self._pages = self._json_data.get("pages", {})
+        self._file_formats = [file_type.strip() for file_type in self._json_data.get("file_formats", "").split(";")] #Split by semicolon, then strip all whitespace on both sides.
 
         if clean_json:
             self._json_data = None
@@ -115,7 +142,10 @@ class MachineDefinition(SignalEmitter):
             return
 
         with open(self._path, "rt", -1, "utf-8") as f:
-            self._json_data = json.load(f, object_pairs_hook=collections.OrderedDict)
+            try:
+                self._json_data = json.load(f, object_pairs_hook=collections.OrderedDict)
+            except JSONDecodeError as e:
+                raise SettingsError.InvalidFileError(self._path) from e
 
         if not self._name:
             self.loadMetaData()
@@ -126,7 +156,16 @@ class MachineDefinition(SignalEmitter):
         self._platform_texture = self._json_data.get("platform_texture", "")
 
         if "inherits" in self._json_data:
-            inherits_from = MachineDefinition(self._machine_manager, Resources.getPath(Resources.MachineDefinitions, self._json_data["inherits"]))
+            try:
+                path = Resources.getPath(Resources.MachineDefinitions, self._json_data["inherits"])
+            except FileNotFoundError as e:
+                # If we cannot find the file in Resources, try and see if it can be found relative to this file.
+                # This is primarily used by the unit tests.
+                path = os.path.join(os.path.dirname(self._path), self._json_data["inherits"])
+                if not os.path.exists(path):
+                    raise FileNotFoundError("Could not find file {0} in Resources or next to {1}".format(self._json_data["inherits"], self._path)) from e
+
+            inherits_from = MachineDefinition(self._machine_manager, path)
             inherits_from.loadAll()
 
             self._machine_settings = inherits_from._machine_settings
@@ -160,6 +199,15 @@ class MachineDefinition(SignalEmitter):
 
         #self._json_data = None
         self._loaded = True
+
+    # Ensure that the required by setting keys are set.
+    def updateRequiredBySettings(self):
+        for setting in self.getAllSettings(include_machine = True):
+            # Ensure that the function that defines the default value is called.
+            # This in turn ensures that the required setting keys are correctly set.
+            setting.getDefaultValue()
+            for key in setting.getRequiredSettingKeys():
+                self.getSetting(key).addRequiredBySettingKey(setting.getKey())
 
     ##  Get setting category by key
     #   \param key Category key to get.

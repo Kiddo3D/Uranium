@@ -8,18 +8,20 @@ class MirrorOperation(Operation.Operation):
     def __init__(self, node, mirror, **kwargs):
         super().__init__()
         self._node = node
-        self._old_mirror = node.getMirror()
-        self._set_mirror = kwargs.get("set_mirror", False)
+        self._old_transformation = node.getLocalTransformation()
+        self._mirror_around_center = kwargs.get("mirror_around_center", False)
         self._mirror = mirror
 
     def undo(self):
-        self._node.setMirror(self._old_mirror)
+        self._node.setTransformation(self._old_transformation)
 
     def redo(self):
-        if self._set_mirror:
-            self._node.setMirror(self._mirror)
-        else:
-            self._node.mirror(self._mirror, SceneNode.TransformSpace.World)
+        if self._mirror_around_center:
+            center = self._node.getBoundingBox().center
+            self._node.setPosition(-center)
+        self._node.scale(self._mirror, SceneNode.TransformSpace.World)
+        if self._mirror_around_center:
+            self._node.setPosition(center)
 
     def mergeWith(self, other):
         if type(other) is not MirrorOperation:
@@ -28,11 +30,8 @@ class MirrorOperation(Operation.Operation):
         if other._node != self._node:
             return False
 
-        if other._set_mirror and not self._set_mirror:
-            return False
-
         op = MirrorOperation(self._node, self._mirror)
-        op._old_scale = other._old_scale
+        op._old_transformation = other._old_transformation
         return op
 
     def __repr__(self):

@@ -26,7 +26,7 @@ class IllegalMethodError(Exception):
 #   \note Currently there is still too much state embedded in a setting. All value functions
 #         and things like visibility should really be separated into a different class.
 #
-class Setting(SignalEmitter):    
+class Setting(SignalEmitter):
     def __init__(self, machine_manager, key, catalog, **kwargs):
         super().__init__()
         self._machine_manager = machine_manager
@@ -55,8 +55,22 @@ class Setting(SignalEmitter):
         self._unit = ""
         self._inherit = True
         self._inherit_function = None
+        self._prohibited = False
 
-        self._dependent_settings = set()
+        # Keys of the settings that this setting requires to set certain values (As defined by inherit & enabled function)
+        self._required_setting_keys = set()
+
+        # Keys of the settings that require this setting to set certain vailes (As defined by inherit & enabled function)
+        self._required_by_setting_keys = set()
+
+    def addRequiredBySettingKey(self, key):
+        self._required_by_setting_keys.add(key)
+
+    def getRequiredBySettingKeys(self):
+        return self._required_by_setting_keys
+
+    def getRequiredSettingKeys(self):
+        return self._required_setting_keys
 
     ##  Bind new validator to object based on it's current type
     def bindValidator(self):
@@ -74,14 +88,15 @@ class Setting(SignalEmitter):
     def fillByDict(self, data):
         if "type" in data:
             self._type = data["type"]
-            if self._type not in ["int", "float", "string", "enum", "boolean", "polygon"]:
-                Logger.log("e", "Invalid type for Setting %s, ignoring", self._key)
+            if self._type not in ["int", "float", "string", "enum", "boolean", "polygon", "polygons"]:
+                Logger.log("e", "Invalid type %s for Setting %s, ignoring", self._type, self._key)
                 return
 
         if "default" in data:
             self._default_value = data["default"]
 
-        self.bindValidator()
+        if not self._validator:
+            self.bindValidator()
 
         if "label" in data:
             self._label = self._i18n_catalog.i18nc("{0} label".format(self._key), data["label"])
@@ -112,6 +127,7 @@ class Setting(SignalEmitter):
             self._hide_if_all_children_visible = not data["always_visible"]
 
         self._inherit = data.get("inherit", True)
+
         if "inherit_function" in data:
             self._inherit_function = self._createFunction(data["inherit_function"])
 
@@ -133,10 +149,17 @@ class Setting(SignalEmitter):
             max_value_warning = self._createFunction(data["max_value_warning"])
 
         if  self.getValidator() is not None: #Strings don"t have validators as of yet
-            self.getValidator().setRange(min_value,max_value,min_value_warning,max_value_warning)
-
+            if min_value:
+                self.getValidator().setMinValue(min_value)
+            if max_value:
+                self.getValidator().setMaxValue(max_value)
+            if max_value_warning:
+                self.getValidator().setMaxValueWarning(max_value_warning)
+            if min_value_warning:
+                self.getValidator().setMinValueWarning(min_value_warning)
         if "enabled" in data:
             self._enabled_function = self._createFunction(data["enabled"])
+            self._prohibited = data["enabled"] == "False" # Enabled can never be true, so this setting is prohibited.
 
         if "options" in data:
             self._options = {}
@@ -151,6 +174,8 @@ class Setting(SignalEmitter):
                     setting.setCategory(self._category)
                     setting.setParent(self)
                     setting.defaultValueChanged.connect(self.defaultValueChanged)
+                    # Pass visibility to parent, as the category needs to be notified when it changes.
+                    setting.visibleChanged.connect(self.visibleChanged)
                     self._children.append(setting)
 
                 setting.fillByDict(value)
@@ -194,6 +219,7 @@ class Setting(SignalEmitter):
 
         if not self._inherit_function and self._inherit and self._parent and isinstance(self._parent, Setting):
             self._inherit_function = self._createFunction("parent_value")
+
     ##  Get the parent.
     #   \returns Setting
     def getParent(self):
@@ -236,7 +262,7 @@ class Setting(SignalEmitter):
             except Exception as e:
                 Logger.log("e", "An error occurred in inherit function for {0}: {1}".format(self._key, str(e)))
             else:
-                if inherit_value:
+                if inherit_value is not None:
                     return inherit_value
 
         return self._default_value
@@ -303,6 +329,9 @@ class Setting(SignalEmitter):
     def getErrorDescription(self):
         return self._error_description
 
+    ##  Emitted whenever this setting's global-only state changes.
+    globalOnlyChanged = Signal()
+
     ##  Get whether the setting is global only or not.
     #
     #   Global only means that this setting cannot be used as a per object setting.
@@ -337,6 +366,11 @@ class Setting(SignalEmitter):
             return self._enabled_function() == True #Force check. 
 
         return True
+
+    ##  Check whether this setting is prohibited.
+    #   This value is true if in all cases of the enabled function the result is false.
+    def isProhibited(self):
+        return self._prohibited
 
     ##  Validate a value using this Setting
     #   \param value The value to validate
@@ -439,7 +473,7 @@ class Setting(SignalEmitter):
 
         def local_function(profile = None):
             if not profile:
-                profile = self._machine_manager.getActiveProfile()
+                profile = self._machine_manager.getWorkingProfile()
 
             if not profile:
                 return None
@@ -448,28 +482,29 @@ class Setting(SignalEmitter):
                 "profile": profile
             }
 
-            if self.getParent():
+            if self.getParent() and isinstance(self.getParent(), Setting):
                 locals["parent_value"] = profile.getSettingValue(self.getParent().getKey())
-                self._dependent_settings.add(self.getParent().getKey())
+                self._required_setting_keys.add(self.getParent().getKey())
+                self.getParent().addRequiredBySettingKey(self._key)
 
             for name in names:
                 locals[name] = profile.getSettingValue(name)
-                self._dependent_settings.add(name)
-
+                self._required_setting_keys.add(name)
             return eval(compiled, globals(), locals)
 
         return local_function
 
     def _onSettingValueChanged(self, key):
-        if key in self._dependent_settings:
+        if key in self._required_setting_keys:
             self.enabledChanged.emit(self)
             self.defaultValueChanged.emit(self)
+            self.globalOnlyChanged.emit(self)
 
     def _onActiveProfileChanged(self):
         if self._profile:
             self._profile.settingValueChanged.disconnect(self._onSettingValueChanged)
 
-        self._profile = self._machine_manager.getActiveProfile()
+        self._profile = self._machine_manager.getWorkingProfile()
         if self._profile:
             self._profile.settingValueChanged.connect(self._onSettingValueChanged)
 

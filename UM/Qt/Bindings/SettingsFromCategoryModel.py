@@ -32,6 +32,7 @@ class SettingsFromCategoryModel(ListModel, SignalEmitter):
     EnabledRole = Qt.UserRole + 14
     FilteredRole = Qt.UserRole + 15
     GlobalOnlyRole = Qt.UserRole + 16
+    ProhibitedRole = Qt.UserRole + 17 # This setting can never be enabled
 
     def __init__(self, category, parent = None, machine_manager = None):
         super().__init__(parent)
@@ -44,9 +45,10 @@ class SettingsFromCategoryModel(ListModel, SignalEmitter):
 
         self._changed_setting = None
 
-        self._profile = None
+        self._profile = self._machine_manager.getWorkingProfile()
         self._machine_manager.activeProfileChanged.connect(self._onProfileChanged)
-        self._onProfileChanged()
+        if self._profile is not None: # A profile is already set but we did not recieve the event.
+            self._onProfileChanged()
 
         self.addRoleName(self.NameRole, "name")
         self.addRoleName(self.TypeRole,"type")
@@ -64,6 +66,7 @@ class SettingsFromCategoryModel(ListModel, SignalEmitter):
         self.addRoleName(self.EnabledRole, "enabled")
         self.addRoleName(self.FilteredRole, "filtered")
         self.addRoleName(self.GlobalOnlyRole, "global_only")
+        self.addRoleName(self.ProhibitedRole, "prohibited")
 
     settingChanged = Signal()
 
@@ -75,19 +78,6 @@ class SettingsFromCategoryModel(ListModel, SignalEmitter):
             return
         setting = self._category.getSetting(key)
         if setting:
-            if self._profile.isReadOnly():
-                custom_profile_name = catalog.i18nc("@item:intext appended to customised profiles ({0} is old profile name)", "{0} (Customised)", self._profile.getName())
-                custom_profile = self._machine_manager.findProfile(custom_profile_name)
-                if not custom_profile:
-                    custom_profile = deepcopy(self._profile)
-                    custom_profile.setReadOnly(False)
-                    custom_profile.setName(custom_profile_name)
-                    self._machine_manager.addProfile(custom_profile)
-
-                self._changed_setting = (key, value)
-                self._machine_manager.setActiveProfile(custom_profile)
-                return
-
             self._profile.setSettingValue(key, value)
             self.setProperty(index, "value", str(value))
             self.setProperty(index, "valid", setting.validate(setting.parseValue(value)))
@@ -117,6 +107,7 @@ class SettingsFromCategoryModel(ListModel, SignalEmitter):
         model.addRoleName(Qt.UserRole + 2, "name")
         for value, name in options.items():
             model.appendItem({"value": str(value), "name": str(name)})
+        model.sort(lambda t: t["name"])
         return model
 
     @pyqtSlot(str)
@@ -134,7 +125,6 @@ class SettingsFromCategoryModel(ListModel, SignalEmitter):
             else:
                 self.setProperty(index, "filtered", True)
 
-    @pyqtSlot()
     def updateSettings(self):
         self.clear()
         for setting in self._category.getAllSettings():
@@ -153,13 +143,15 @@ class SettingsFromCategoryModel(ListModel, SignalEmitter):
                 "depth": setting.getDepth(),
                 "warning_description": setting.getWarningDescription(),
                 "error_description": setting.getErrorDescription(),
-                "overridden": (not self._profile.isReadOnly()) and self._profile.hasSettingValue(setting.getKey()),
+                "overridden": (not self._profile.isReadOnly()) and self._profile.hasSettingValue(setting.getKey(), filter_defaults = True),
                 "enabled": setting.isEnabled(),
                 "filtered": False,
-                "global_only": setting.getGlobalOnly()
+                "global_only": setting.getGlobalOnly(),
+                "prohibited": setting.isProhibited()
             })
             setting.visibleChanged.connect(self._onSettingVisibleChanged)
             setting.enabledChanged.connect(self._onSettingEnabledChanged)
+            setting.globalOnlyChanged.connect(self._onSettingGlobalOnlyChanged)
 
     def _onSettingVisibleChanged(self, setting):
         if setting:
@@ -173,11 +165,21 @@ class SettingsFromCategoryModel(ListModel, SignalEmitter):
             if index != -1:
                 self.setProperty(index, "enabled", setting.isEnabled())
 
+    ##  Updates the global only property if any of its dependencies have its
+    #   value changed.
+    #
+    #   \param setting The setting whose value has changed.
+    def _onSettingGlobalOnlyChanged(self, setting):
+        if setting:
+            index = self.find("key", setting.getKey())
+            if index != -1:
+                self.setProperty(index, "global_only", setting.getGlobalOnly())
+
     def _onProfileChanged(self):
         if self._profile:
             self._profile.settingValueChanged.disconnect(self._onSettingValueChanged)
 
-        self._profile = self._machine_manager.getActiveProfile()
+        self._profile = self._machine_manager.getWorkingProfile()
         if self._profile:
             self._profile.settingValueChanged.connect(self._onSettingValueChanged)
             self.updateSettings()
@@ -193,5 +195,5 @@ class SettingsFromCategoryModel(ListModel, SignalEmitter):
             value = self._profile.getSettingValue(key)
 
             self.setProperty(index, "value", str(value))
-            self.setProperty(index, "overridden", self._profile.hasSettingValue(key))
+            self.setProperty(index, "overridden", self._profile.hasSettingValue(key, filter_defaults = True))
             self.setProperty(index, "valid", setting.validate(value))

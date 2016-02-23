@@ -41,7 +41,7 @@ class TranslateTool(Tool):
         if event.type == Event.KeyReleaseEvent and event.key == KeyEvent.ShiftKey:
             self._grid_snap = False
 
-        if event.type == Event.MousePressEvent:
+        if event.type == Event.MousePressEvent and self._controller.getToolsEnabled():
             if MouseEvent.LeftButton not in event.buttons:
                 return False
 
@@ -98,8 +98,7 @@ class TranslateTool(Tool):
 
         if event.type == Event.MouseReleaseEvent:
             if self.getDragPlane():
-                if self._moved:
-                    self.operationStopped.emit(self)
+                self.operationStopped.emit(self)
 
                 self.setLockedAxis(None)
                 self.setDragPlane(None)

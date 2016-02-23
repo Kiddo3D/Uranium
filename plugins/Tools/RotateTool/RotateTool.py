@@ -53,7 +53,7 @@ class RotateTool(Tool):
             self._snap_rotation = (not self._snap_rotation)
             self.propertyChanged.emit()
 
-        if event.type == Event.MousePressEvent:
+        if event.type == Event.MousePressEvent and self._controller.getToolsEnabled():
             if MouseEvent.LeftButton not in event.buttons:
                 return False
 
@@ -122,7 +122,7 @@ class RotateTool(Tool):
                 self.propertyChanged.emit()
                 self._angle_update_time = new_time
 
-            Selection.applyOperation(RotateOperation, rotation)
+            Selection.applyOperation(RotateOperation, rotation, rotate_around_point = handle_position)
 
             self.setDragStart(event.x, event.y)
 

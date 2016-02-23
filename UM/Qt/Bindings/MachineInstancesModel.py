@@ -12,6 +12,7 @@ class MachineInstancesModel(ListModel):
     TypeNameRole = Qt.UserRole + 3
     VariantNameRole = Qt.UserRole + 4
     HasVariantsRole = Qt.UserRole + 5
+    HasMaterialsRole = Qt.UserRole + 6
 
     def __init__(self, parent = None):
         super().__init__(parent)
@@ -21,6 +22,7 @@ class MachineInstancesModel(ListModel):
         self.addRoleName(self.TypeNameRole, "typeName")
         self.addRoleName(self.VariantNameRole, "variantName")
         self.addRoleName(self.HasVariantsRole, "hasVariants")
+        self.addRoleName(self.HasMaterialsRole, "hasMaterials")
 
         self._manager = Application.getInstance().getMachineManager()
 
@@ -40,6 +42,13 @@ class MachineInstancesModel(ListModel):
             return
 
         self._manager.removeMachineInstance(instance)
+
+    @pyqtSlot(str, result = bool)
+    def checkInstanceNameExists(self, name):
+        instance = self._manager.findMachineInstance(name)
+        if instance:
+            return True
+        return False
 
     @pyqtSlot(str, str)
     def renameMachineInstance(self, old_name, new_name):
@@ -62,7 +71,8 @@ class MachineInstancesModel(ListModel):
                 "active": self._manager.getActiveMachineInstance() == machine,
                 "typeName": machine.getMachineDefinition().getName(),
                 "variantName": machine.getMachineDefinition().getVariantName(),
-                "hasVariants": machine.getMachineDefinition().hasVariants()
+                "hasVariants": machine.getMachineDefinition().hasVariants(),
+                "hasMaterials": machine.hasMaterials()
             })
 
     def _onActiveMachineChanged(self):

@@ -26,7 +26,7 @@ class MirrorTool(Tool):
     def event(self, event):
         super().event(event)
 
-        if event.type == Event.MousePressEvent:
+        if event.type == Event.MousePressEvent and self._controller.getToolsEnabled():
             if MouseEvent.LeftButton not in event.buttons:
                 return False
 
@@ -43,28 +43,28 @@ class MirrorTool(Tool):
                 op = None
                 if Selection.getCount() == 1:
                     node = Selection.getSelectedObject(0)
-                    mirror = node.getMirror()
+                    mirror = Vector(1,1,1)
                     if self.getLockedAxis() == ToolHandle.XAxis:
-                        mirror.setX(-mirror.x)
+                        mirror.setX(-1)
                     elif self.getLockedAxis() == ToolHandle.YAxis:
-                        mirror.setY(-mirror.y)
+                        mirror.setY(-1)
                     elif self.getLockedAxis() == ToolHandle.ZAxis:
-                        mirror.setZ(-mirror.z)
+                        mirror.setZ(-1)
 
-                    op = MirrorOperation(node, mirror, set_mirror=True)
+                    op = MirrorOperation(node, mirror, mirror_around_center = True)
                 else:
                     op = GroupedOperation()
 
                     for node in Selection.getAllSelectedObjects():
                         mirror = node.getMirror()
                         if self.getLockedAxis() == ToolHandle.XAxis:
-                            mirror.setX(-mirror.x)
+                            mirror.setX(-1)
                         elif self.getLockedAxis() == ToolHandle.YAxis:
-                            mirror.setY(-mirror.y)
+                            mirror.setY(-1)
                         elif self.getLockedAxis() == ToolHandle.ZAxis:
-                            mirror.setZ(-mirror.z)
+                            mirror.setZ(-1)
 
-                        op.addOperation(MirrorOperation(node, mirror, set_mirror = True))
+                        op.addOperation(MirrorOperation(node, mirror, mirror_around_center = True))
 
                 op.push()
 
